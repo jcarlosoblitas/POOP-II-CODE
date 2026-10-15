@@ -1,0 +1,888 @@
+
+#include<iostream>
+#include<string>
+#include<cstdlib>
+#include<fstream>
+#include<sstream>
+#include<ctime>
+using namespace std;
+
+const int MAX_JUGADORES = 10;
+
+int numJugadores;
+int valorGanar;
+string palos[4];
+
+bool cargarconfiguracion(){
+    ifstream archivo("setup.txt");
+
+    if(!archivo.is_open()){
+        cout<<"No se pudo abrir setup.txt"<<endl;
+        return false;
+    }
+
+    string jugadores, Ncartas, puntaje;
+    getline(archivo,jugadores);
+    getline(archivo,Ncartas);
+    getline(archivo,puntaje);
+
+    numJugadores = atoi(jugadores.c_str());
+    valorGanar = atoi(puntaje.c_str());
+
+    if(numJugadores < 1 || numJugadores > MAX_JUGADORES){
+        cout<<"El numero de jugadores debe estar entre 1 y "<<MAX_JUGADORES<<"."<<endl;
+        return false;
+    }
+
+    if(valorGanar < 12){
+        cout<<"El valor para ganar debe ser 12 o mayor."<<endl;
+        return false;
+    }
+
+    stringstream ss(Ncartas);
+    string item;
+    int n = 0;
+
+    while(n < 4 && getline(ss,item,',')){
+        // quita los espacios del inicio
+        size_t pos = item.find_first_not_of(" ");
+        if(pos != string::npos)
+            item = item.substr(pos);
+
+        // quita un posible salto de linea al final (archivos de Windows)
+        size_t fin = item.find_last_not_of(" \r\n");
+        if(fin != string::npos)
+            item = item.substr(0, fin + 1);
+
+        palos[n] = item;
+        n++;
+    }
+
+    if(n != 4){
+        cout<<"El archivo debe tener 4 palos separados por comas."<<endl;
+        return false;
+    }
+
+    return true;
+}
+
+class carta{
+private:
+    char nombre;
+    int valor;
+    int denominacion;
+    int palo;
+public:
+    carta();
+    carta(char,int);
+    int obtenervalor();
+    char obtenernombre();
+    int obtenerpalo();
+    void mostrarcarta();
+    int obtenerdenominacion();
+};
+
+class mazo{
+private:
+    //array con solo 52 valores
+    carta cartas[52];
+    int siguiente;
+    int cantidad;
+public:
+    mazo();
+    void llenarmazo();
+    void barajar();
+    carta entregarcarta();
+    void guardar(ofstream&);
+    bool cargar(ifstream&);
+    void mostrarmazo();
+};
+
+class mano{
+private:
+    carta cartas[52];
+    int cantidad;
+public:
+    mano();
+    void agregarcarta(carta);
+    void mostrarmano();
+    void mostrarprimera();
+    int obtenerpuntos();
+    int cantidadcartas();
+    void limpiarmano();
+    void guardar(ofstream&);
+    bool cargar(ifstream&);
+};
+
+class jugador{
+protected:
+    mazo* baraja;
+    mano cartasjugador;
+    bool puedePedir;
+    string nombre;
+public:
+    jugador();                       // necesario para crear el arreglo
+    jugador(mazo*, string);          // lo usa el dealer
+    void configurar(mazo*, string);  // lo usan los jugadores del arreglo
+    virtual void mostrarjugador();
+    void iniciarmano();
+    void pedircarta();
+    void plantarse();
+    int obtenerpuntos();
+    bool perdio();
+    bool blackjacknatural();
+    string obtenernombre();
+    void guardar(ofstream&);
+    bool cargar(ifstream&);
+};
+
+class dealer : public jugador{
+public:
+    dealer(mazo*);
+    void mostrarjugador();
+    void jugar();
+};
+
+class juegoBlackjack{
+private:
+    mazo baraja;
+    jugador jugadores[MAX_JUGADORES];   // arreglo de jugadores
+    dealer crupier;
+    int turnoActual;
+
+    void continuarpartida();
+    bool guardarpartida();
+    bool cargarpartida();
+
+
+public:
+    juegoBlackjack();
+    void jugarpartida();
+    void recuperarpartida();
+    void mostrarresultado();
+    void mostrarmazo();
+
+};
+
+
+
+
+carta::carta(){
+    nombre = '2';
+    valor = 2;
+    denominacion = 2;
+    palo = 0;
+}
+
+carta::carta(char _nombre,int _palo){
+
+
+    if(_palo < 0 || _palo > 3)
+        palo = 0;
+    else
+        palo = _palo;
+
+
+    if(_nombre=='A'){
+        nombre='A';
+        denominacion=1;
+        valor=11;
+    }
+    else if(_nombre>='2'&& _nombre<='9'){
+        nombre=_nombre;
+        valor=nombre-'0';
+        denominacion=valor;       // corregido: estaba valor=denominacion
+    }
+    else if(_nombre == 'T' || _nombre == 'J' ||
+            _nombre == 'Q' || _nombre == 'K'){
+        nombre = _nombre;
+        valor = 10;
+        denominacion = 10;
+    }
+    else{
+        nombre = '2';
+        valor = 2;
+        denominacion = 2;
+    }
+}
+
+int carta::obtenervalor(){
+    return valor;
+}
+
+char carta::obtenernombre(){
+    return nombre;
+}
+
+int carta::obtenerpalo(){
+    return palo;
+}
+
+int carta::obtenerdenominacion(){
+    return denominacion;
+}
+
+void carta::mostrarcarta(){
+    if(nombre == 'A')
+        cout<<"As";
+    else if(nombre == 'J')
+        cout<<"Jota";
+    else if(nombre == 'Q')
+        cout<<"Reina";
+    else if(nombre == 'K')
+        cout<<"Rey";
+    else if(nombre == 'T')
+        cout<<"10";
+    else
+        cout<<nombre;
+
+    // el nombre del palo viene de setup.txt
+    cout<<" de "<<palos[palo]<<endl;
+}
+
+
+
+
+
+//carta
+
+mazo::mazo(){
+    siguiente = 0;
+    cantidad = 0;
+    llenarmazo();
+    barajar();
+}
+// 13 cartas por cada mazo
+void mazo::llenarmazo(){
+    cantidad = 0;
+
+    char valores[13] = {
+        'A','2','3','4','5','6','7',
+        '8','9','T','J','Q','K'
+    };
+
+    // recorre las 13 cartas y los 4 palos
+    for(int i = 0; i < 13; i++){
+        for(int j = 0; j < 4; j++){
+            if(cantidad < 52){
+                cartas[cantidad] = carta(valores[i],j);
+                cantidad++;
+            }
+        }
+    }
+}
+
+void mazo::barajar(){
+    for(int i = cantidad-1; i > 0; i--){
+        int j = rand() % (i+1);
+
+        carta auxiliar = cartas[i];
+        cartas[i] = cartas[j];
+        cartas[j] = auxiliar;
+    }
+
+    siguiente = 0;
+}
+
+void mazo::mostrarmazo(){
+    cout << "\n===== LAS 52 CARTAS BARAJEADAS =====" << endl;
+
+    for(int i = 0; i < 52; i++){
+        cout << i + 1 << ". ";
+        cartas[i].mostrarcarta();
+    }
+}
+
+carta mazo::entregarcarta(){
+    if(siguiente >= cantidad){
+        llenarmazo();
+        barajar();
+    }
+
+    carta entregada = cartas[siguiente];
+    siguiente++;
+
+    return entregada;
+}
+
+// Guarda todas las cartas y la posicion de la siguiente carta
+void mazo::guardar(ofstream& archivo){
+    archivo<<cantidad<<endl;
+    archivo<<siguiente<<endl;
+
+    for(int i = 0; i < cantidad; i++){
+        archivo<<cartas[i].obtenernombre()<<" "
+               <<cartas[i].obtenerpalo()<<endl;
+    }
+}
+
+// Recupera el orden de la baraja guardada
+bool mazo::cargar(ifstream& archivo){
+    int cantidadGuardada;
+    int siguienteGuardado;
+
+    if(!(archivo>>cantidadGuardada>>siguienteGuardado))
+        return false;
+
+    // El mazo siempre debe tener 52 cartas como maximo
+    if(cantidadGuardada != 52 ||
+       siguienteGuardado < 0 ||
+       siguienteGuardado > cantidadGuardada)
+        return false;
+
+    int cartasPorPalo[4] = {0,0,0,0};
+    for(int i = 0; i < cantidadGuardada; i++){
+        char nombre;
+        int palo;
+
+        if(!(archivo>>nombre>>palo))
+            return false;
+        // Comprueba que el nombre de la carta sea valido
+        if(nombre != 'A' &&
+           !(nombre >= '2' && nombre <= '9') &&
+           nombre != 'T' && nombre != 'J' &&
+           nombre != 'Q' && nombre != 'K')
+            return false;
+
+        if(palo < 0 || palo > 3)
+            return false;
+
+        cartasPorPalo[palo]++;
+
+        cartas[i] = carta(nombre,palo);
+    }
+
+    // Cada palo debe tener exactamente 13 cartas
+    for(int i = 0; i < 4; i++){
+        if(cartasPorPalo[i] != 13)
+            return false;
+    }
+    cantidad = cantidadGuardada;
+    siguiente = siguienteGuardado;
+
+    return true;
+}
+
+
+
+
+
+// mano
+
+mano::mano(){
+    cantidad = 0;
+}
+
+void mano::agregarcarta(carta nueva){
+    if(cantidad < 52){
+        cartas[cantidad] = nueva;
+        cantidad++;
+    }
+}
+
+void mano::mostrarmano(){
+    for(int i = 0; i < cantidad; i++){
+        cout<<"  ";
+        cartas[i].mostrarcarta();
+    }
+}
+
+void mano::mostrarprimera(){
+    if(cantidad > 0)
+        cartas[0].mostrarcarta();
+}
+
+int mano::obtenerpuntos(){
+    int suma = 0;
+    int ases = 0;
+
+    for(int i = 0; i < cantidad; i++){
+        suma = suma + cartas[i].obtenervalor();
+
+        if(cartas[i].obtenernombre() == 'A')
+            ases++;
+    }
+
+    // Reduce el valor de los ases si la puntuacion supera el valor para ganar
+    while(suma > valorGanar && ases > 0){
+        suma = suma - 10;
+        ases--;
+    }
+
+    return suma;
+}
+
+int mano::cantidadcartas(){
+    return cantidad;
+}
+
+void mano::limpiarmano(){
+    cantidad = 0;
+}
+
+// Guarda la cantidad de cartas y sus datos
+void mano::guardar(ofstream& archivo){
+    archivo<<cantidad<<endl;
+
+    for(int i = 0; i < cantidad; i++){
+        archivo<<cartas[i].obtenernombre()<<" "
+               <<cartas[i].obtenerpalo()<<endl;
+    }
+}
+
+// Recupera las cartas que tenia el participante
+bool mano::cargar(ifstream& archivo){
+    int cantidadGuardada;
+
+    if(!(archivo>>cantidadGuardada))
+        return false;
+
+    if(cantidadGuardada < 0 || cantidadGuardada > 52)
+        return false;
+
+    for(int i = 0; i < cantidadGuardada; i++){
+        char nombre;
+        int palo;
+
+        if(!(archivo>>nombre>>palo))
+            return false;
+
+        if(nombre != 'A' &&
+           !(nombre >= '2' && nombre <= '9') &&
+           nombre != 'T' && nombre != 'J' &&
+           nombre != 'Q' && nombre != 'K')
+            return false;
+
+        if(palo < 0 || palo > 3)
+            return false;
+
+        cartas[i] = carta(nombre,palo);
+    }
+
+    cantidad = cantidadGuardada;
+
+    return true;
+}
+
+
+
+
+
+
+
+// jugador
+
+jugador::jugador(){
+    baraja = NULL;
+    nombre = "";
+    puedePedir = true;
+}
+
+jugador::jugador(mazo* _baraja, string _nombre){
+    baraja = _baraja;
+    nombre = _nombre;
+    puedePedir = true;
+}
+
+// Asigna el mazo y el nombre a un jugador del arreglo
+void jugador::configurar(mazo* _baraja, string _nombre){
+    baraja = _baraja;
+    nombre = _nombre;
+    puedePedir = true;
+}
+
+string jugador::obtenernombre(){
+    return nombre;
+}
+
+void jugador::iniciarmano(){
+    cartasjugador.limpiarmano();
+
+    cartasjugador.agregarcarta(baraja->entregarcarta());
+    cartasjugador.agregarcarta(baraja->entregarcarta());
+
+    puedePedir = true;
+}
+
+void jugador::pedircarta(){
+    if(puedePedir){
+        carta nueva = baraja->entregarcarta();
+        cartasjugador.agregarcarta(nueva);
+
+        cout<<"Carta obtenida: ";
+        nueva.mostrarcarta();
+    }
+}
+
+void jugador::plantarse(){
+    puedePedir = false;
+}
+
+int jugador::obtenerpuntos(){
+    return cartasjugador.obtenerpuntos();
+}
+
+bool jugador::perdio(){
+    return obtenerpuntos() > valorGanar;
+}
+
+bool jugador::blackjacknatural(){
+    return obtenerpuntos() == valorGanar &&
+           cartasjugador.cantidadcartas() == 2;
+}
+
+void jugador::mostrarjugador(){
+    cout<<"Cartas de "<<nombre<<":"<<endl;
+    cartasjugador.mostrarmano();
+    cout<<"Puntuacion: "<<obtenerpuntos()<<endl;
+}
+
+// Guarda la mano y si el participante puede pedir cartas
+void jugador::guardar(ofstream& archivo){
+    archivo<<puedePedir<<endl;
+    cartasjugador.guardar(archivo);
+}
+
+// Recupera la mano y el estado del participante
+bool jugador::cargar(ifstream& archivo){
+    int estado;
+
+    if(!(archivo>>estado))
+        return false;
+
+    if(estado != 0 && estado != 1)
+        return false;
+
+    puedePedir = (estado == 1);
+
+    return cartasjugador.cargar(archivo);
+}
+
+
+
+
+
+
+
+// dealer
+
+dealer::dealer(mazo* _baraja):jugador(_baraja,"Dealer"){
+}
+
+void dealer::mostrarjugador(){
+    cout<<"Primera carta del Dealer: ";
+    cartasjugador.mostrarprimera();
+    cout<<"La segunda carta permanece oculta."<<endl;
+}
+
+void dealer::jugar(){
+    cout<<"\n========== TURNO DEL DEALER =========="<<endl;
+
+    // Pide mientras tenga menos de (valor para ganar - 4)
+    // Con 21 equivale a la regla clasica de plantarse en 17
+    while(obtenerpuntos() < valorGanar - 4){
+        pedircarta();
+    }
+
+    cout<<"Cartas finales del Dealer:"<<endl;
+    jugador::mostrarjugador();
+}
+
+
+
+
+
+
+//juegoblacjack
+
+juegoBlackjack::juegoBlackjack():
+    crupier(&baraja){
+
+    turnoActual = 0;
+
+    // Configura solo los jugadores indicados en setup.txt
+    for(int i = 0; i < numJugadores; i++){
+        ostringstream nom;
+        nom<<"Jugador "<<i+1;
+        jugadores[i].configurar(&baraja, nom.str());
+    }
+}
+
+void juegoBlackjack::mostrarmazo(){
+    baraja.mostrarmazo();
+}
+
+// Guarda el estado de la partida en un archivo TXT
+bool juegoBlackjack::guardarpartida(){
+    ofstream archivo("partida.txt");
+
+    if(!archivo.is_open()){
+        cout<<"No se pudo guardar la partida."<<endl;
+        return false;
+    }
+
+    archivo<<"BLACKJACK21"<<endl;
+    // Se guarda la configuracion con la que se jugo
+    archivo<<numJugadores<<endl;
+    archivo<<valorGanar<<endl;
+    archivo<<turnoActual<<endl;
+
+    baraja.guardar(archivo);
+
+    for(int i = 0; i < numJugadores; i++)
+        jugadores[i].guardar(archivo);
+
+    crupier.guardar(archivo);
+
+    archivo.close();
+
+    cout<<"Partida guardada correctamente en partida.txt"<<endl;
+
+    return true;
+}
+
+// Recupera el estado guardado anteriormente
+bool juegoBlackjack::cargarpartida(){
+    ifstream archivo("partida.txt");
+
+    if(!archivo.is_open()){
+        cout<<"No existe el archivo partida.txt."<<endl;
+        return false;
+    }
+
+    string version;
+
+    if(!(archivo>>version)){
+        cout<<"El archivo esta vacio."<<endl;
+        return false;
+    }
+
+    if(version != "BLACKJACK21"){
+        cout<<"El archivo no tiene el formato correcto."<<endl;
+        return false;
+    }
+
+    int jugadoresGuardados;
+    int valorGuardado;
+    int turnoGuardado;
+
+    if(!(archivo>>jugadoresGuardados>>valorGuardado>>turnoGuardado)){
+        cout<<"No se pudo recuperar la partida."<<endl;
+        return false;
+    }
+
+    // La partida guardada debe coincidir con setup.txt
+    if(jugadoresGuardados != numJugadores || valorGuardado != valorGanar){
+        cout<<"La partida guardada no coincide con setup.txt "
+            <<"(jugadores o valor para ganar distintos)."<<endl;
+        return false;
+    }
+
+    if(turnoGuardado < 0 || turnoGuardado >= numJugadores){
+        cout<<"No se pudo recuperar la partida."<<endl;
+        return false;
+    }
+
+    if(!baraja.cargar(archivo)){
+        cout<<"No se pudo recuperar la partida."<<endl;
+        return false;
+    }
+
+    for(int i = 0; i < numJugadores; i++){
+        if(!jugadores[i].cargar(archivo)){
+            cout<<"No se pudo recuperar la partida."<<endl;
+            return false;
+        }
+    }
+
+    if(!crupier.cargar(archivo)){
+        cout<<"No se pudo recuperar la partida."<<endl;
+        return false;
+    }
+
+    archivo.close();
+
+    turnoActual = turnoGuardado;
+
+    cout<<"Partida recuperada correctamente."<<endl;
+
+    return true;
+}
+
+void juegoBlackjack::jugarpartida(){
+    baraja.llenarmazo();
+    baraja.barajar();
+
+    for(int i = 0; i < numJugadores; i++)
+        jugadores[i].iniciarmano();
+
+    crupier.iniciarmano();
+
+    cout<<"\n====================================="<<endl;
+    cout<<"          NUEVA PARTIDA"<<endl;
+    cout<<"====================================="<<endl;
+
+    for(int i = 0; i < numJugadores; i++){
+        jugadores[i].mostrarjugador();
+        cout<<endl;
+    }
+    crupier.mostrarjugador();
+
+    // Si el Dealer tiene Blackjack natural, la ronda termina
+    if(crupier.blackjacknatural()){
+        cout<<"\nCartas del Dealer:"<<endl;
+        crupier.jugador::mostrarjugador();
+        cout<<"El Dealer tiene Blackjack natural."<<endl;
+        mostrarresultado();
+        return;
+    }
+
+    turnoActual = 0;
+    continuarpartida();
+}
+
+// Continua los turnos, tanto en una partida nueva como recuperada
+void juegoBlackjack::continuarpartida(){
+    char opcion;
+
+    for(int i = turnoActual; i < numJugadores; i++){
+        turnoActual = i;
+
+        cout<<"\n========== TURNO DE "<<jugadores[i].obtenernombre()<<" =========="<<endl;
+        jugadores[i].mostrarjugador();
+
+        // Con Blackjack natural no hace falta pedir cartas
+        if(jugadores[i].blackjacknatural()){
+            cout<<jugadores[i].obtenernombre()<<" tiene Blackjack natural."<<endl;
+            jugadores[i].plantarse();
+            continue;
+        }
+
+        while(!jugadores[i].perdio()){
+            cout<<"\nQue deseas hacer, "<<jugadores[i].obtenernombre()<<"?"<<endl;
+            cout<<"1. Pedir otra carta"<<endl;
+            cout<<"2. Plantarse"<<endl;
+            cout<<"3. Guardar y salir"<<endl;
+            cout<<"Selecciona una opcion: ";
+            cin>>opcion;
+
+            if(opcion == '1'){
+                jugadores[i].pedircarta();
+                jugadores[i].mostrarjugador();
+            }
+            else if(opcion == '2'){
+                jugadores[i].plantarse();
+                break;
+            }
+            else if(opcion == '3'){
+                // Si se guarda correctamente, termina sin finalizar la partida.
+                if(guardarpartida())
+                    return;
+            }
+            else{
+                cout<<"Opcion no valida. Ingresa 1, 2 o 3."<<endl;
+            }
+        }
+
+        if(jugadores[i].perdio())
+            cout<<jugadores[i].obtenernombre()<<" se paso de "
+                <<valorGanar<<". Pierde."<<endl;
+    }
+
+    // El Dealer solo juega si queda algun jugador sin pasarse
+    bool alguienVivo = false;
+    for(int i = 0; i < numJugadores; i++){
+        if(!jugadores[i].perdio())
+            alguienVivo = true;
+    }
+
+    if(alguienVivo)
+        crupier.jugar();
+    else
+        cout<<"\nTodos los jugadores se pasaron. El Dealer no necesita jugar."<<endl;
+
+    mostrarresultado();
+}
+
+// Carga el archivo y continua desde el turno guardado
+void juegoBlackjack::recuperarpartida(){
+    if(cargarpartida()){
+        cout<<"\n========== PARTIDA RECUPERADA =========="<<endl;
+
+        for(int i = 0; i < numJugadores; i++){
+            jugadores[i].mostrarjugador();
+            cout<<endl;
+        }
+        crupier.mostrarjugador();
+
+        continuarpartida();
+    }
+}
+
+void juegoBlackjack::mostrarresultado(){
+    int puntosDealer = crupier.obtenerpuntos();
+
+    cout<<"\nRESULTADO FINAL (valor para ganar: "<<valorGanar<<"):"<<endl;
+    cout<<"Dealer: "<<puntosDealer<<" puntos"<<endl;
+
+    for(int i = 0; i < numJugadores; i++){
+        int puntos = jugadores[i].obtenerpuntos();
+
+        cout<<jugadores[i].obtenernombre()<<": "<<puntos<<" puntos - ";
+
+        if(puntos > valorGanar)
+            cout<<"Se paso. Gana el Dealer."<<endl;
+        else if(puntosDealer > valorGanar)
+            cout<<"El Dealer se paso. Ganaste."<<endl;
+        else if(puntos > puntosDealer)
+            cout<<"Ganaste."<<endl;
+        else if(puntos < puntosDealer)
+            cout<<"Gana el Dealer."<<endl;
+        else
+            cout<<"Empate."<<endl;
+    }
+}
+
+
+
+int main(){
+    srand((unsigned)time(0));
+
+    // Lee setup.txt antes de crear el juego
+    if(!cargarconfiguracion())
+        return 1;
+
+    juegoBlackjack juego;
+    int opcion;
+
+    do{
+        cout<<"\n====================================="<<endl;
+        cout<<"          BLACKJACK "<<valorGanar<<endl;
+        cout<<"====================================="<<endl;
+        cout<<"1. Jugar partida nueva"<<endl;
+        cout<<"2. Recuperar partida guardada"<<endl;
+        cout<<"3. Salir"<<endl;
+        cout<<"Selecciona una opcion: ";
+        cin>>opcion;
+
+        switch(opcion){
+            case 1:
+                juego.jugarpartida();
+                break;
+            case 2:
+                juego.recuperarpartida();
+                break;
+            case 3:
+                cout<<"Gracias por jugar Blackjack."<<endl;
+                break;
+            default:
+                cout<<"Opcion no valida. Elige 1, 2 o 3."<<endl;
+        }
+
+    }while(opcion != 3);
+
+    juego.mostrarmazo();
+
+
+    return 0;
+}
